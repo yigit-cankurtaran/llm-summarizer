@@ -3,9 +3,14 @@
 python-dateutil>=2.9.0.post0
 
 # AI service integrations
-openai>=1.50.0           # OpenAI API
-ollama>=0.4.0            # Ollama local models
+openai>=1.97.1           # OpenAI API (latest 2025)
+ollama>=0.5.1            # Ollama local models (latest 2025)
 requests>=2.32.0         # HTTP requests for custom endpoints
+
+# PDF and EPUB processing libraries
+PyMuPDF>=1.26.3          # PDF text extraction with chapter/page support (Python 3.13 compatible)
+ebooklib>=0.19           # EPUB text extraction (latest 2025)
+beautifulsoup4>=4.13.4   # HTML parsing for EPUB content
 
 # Optional development dependencies
 # pytest>=8.0.0
