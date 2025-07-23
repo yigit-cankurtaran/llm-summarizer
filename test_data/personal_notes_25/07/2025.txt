@@ -1,0 +1,30 @@
+Personal Development Notes - July 25, 2025
+
+Learning Goals This Week:
+- Completed advanced TypeScript patterns course
+- Read three chapters on system design from "Designing Data-Intensive Applications"
+- Practiced LeetCode problems focusing on graph algorithms
+- Attended virtual conference on microservices architecture
+
+Key Takeaways:
+- TypeScript utility types can significantly improve code maintainability
+- Event sourcing might be good solution for our audit requirements
+- Graph algorithms useful for recommendation system we're planning
+- Microservices introduce complexity but solve scaling issues
+
+Side Projects:
+- Personal finance tracker app nearly complete
+- Need to implement data export functionality
+- Considering adding machine learning for expense categorization
+- Planning to open source the project next month
+
+Career Development:
+- Scheduled 1:1 with manager to discuss promotion path
+- Identified areas for improvement in leadership skills
+- Considering taking online course on team management
+- Want to start mentoring junior developers more actively
+
+Books to Read:
+- "Clean Architecture" by Robert Martin
+- "The Manager's Path" by Camille Fournier
+- "Site Reliability Engineering" by Google

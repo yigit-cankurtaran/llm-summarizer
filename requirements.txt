@@ -1,0 +1,13 @@
+# Minimum Python version: 3.13.5
+# Core dependencies
+python-dateutil>=2.9.0.post0
+
+# AI service integrations
+openai>=1.50.0           # OpenAI API
+ollama>=0.4.0            # Ollama local models
+requests>=2.32.0         # HTTP requests for custom endpoints
+
+# Optional development dependencies
+# pytest>=8.0.0
+# black>=24.0.0
+# ruff>=0.6.0
