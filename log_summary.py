@@ -184,7 +184,17 @@ class LogSummaryProcessor:
             print(f"Warning: Could not read {filepath}: {e}")
             return ""
     
-    def generate_summary_with_openai(self, content: str, bullet_count: int) -> str:
+    def suppress_thinking_output(self, text: str, preserve_thinking: bool = False) -> str:
+        """Remove thinking output tags and content from AI responses."""
+        if preserve_thinking:
+            return text.strip()
+        
+        # Remove everything between <think> and </think> tags, including the tags themselves
+        cleaned = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL | re.IGNORECASE)
+        return cleaned.strip()
+    
+    def generate_summary_with_openai(self, content: str, bullet_count: int, 
+                                    preserve_thinking: bool = False) -> str:
         """Generate summary using OpenAI API."""
         if not self.openai_client:
             raise ValueError("OpenAI client not available. Set OPENAI_API_KEY environment variable.")
@@ -211,13 +221,13 @@ etc."""
                 temperature=0.3
             )
             
-            return response.choices[0].message.content.strip()
+            return self.suppress_thinking_output(response.choices[0].message.content, preserve_thinking)
             
         except Exception as e:
             raise ValueError(f"OpenAI API error: {e}")
     
     def generate_summary_with_ollama(self, content: str, bullet_count: int, 
-                                   model: str = 'llama3.2') -> str:
+                                   model: str = 'llama3.2', preserve_thinking: bool = False) -> str:
         """Generate summary using Ollama local models."""
         if not self.ollama_available:
             raise ValueError("Ollama not available. Make sure Ollama is installed and running.")
@@ -248,13 +258,14 @@ etc."""
                 ]
             )
             
-            return response['message']['content'].strip()
+            return self.suppress_thinking_output(response['message']['content'], preserve_thinking)
             
         except Exception as e:
             raise ValueError(f"Ollama API error: {e}")
     
     def generate_summary_with_custom_api(self, content: str, bullet_count: int,
-                                       api_url: str, api_key: str = None) -> str:
+                                       api_url: str, api_key: str = None, 
+                                       preserve_thinking: bool = False) -> str:
         """Generate summary using a custom API endpoint."""
         if not REQUESTS_AVAILABLE:
             raise ValueError("Requests library not available. Install with: pip install requests")
@@ -293,15 +304,15 @@ etc."""
             
             # OpenAI-compatible format
             if 'choices' in response_json:
-                return response_json['choices'][0]['message']['content'].strip()
+                return self.suppress_thinking_output(response_json['choices'][0]['message']['content'], preserve_thinking)
             # Anthropic-compatible format
             elif 'content' in response_json:
-                return response_json['content'].strip()
+                return self.suppress_thinking_output(response_json['content'], preserve_thinking)
             # Generic text response
             elif 'text' in response_json:
-                return response_json['text'].strip()
+                return self.suppress_thinking_output(response_json['text'], preserve_thinking)
             else:
-                return str(response_json).strip()
+                return self.suppress_thinking_output(str(response_json), preserve_thinking)
                 
         except Exception as e:
             raise ValueError(f"Custom API error: {e}")
@@ -339,7 +350,8 @@ etc."""
     
     def process_files(self, timeframe: str = None, bullet_count: int = 5, 
                      use_ai: bool = True, ollama_model: str = 'llama3.2',
-                     custom_api_url: str = None, custom_api_key: str = None) -> str:
+                     custom_api_url: str = None, custom_api_key: str = None,
+                     preserve_thinking: bool = False) -> str:
         """
         Main processing function that orchestrates the entire workflow.
         
@@ -350,6 +362,7 @@ etc."""
             ollama_model: Model to use with Ollama (default: llama3.2)
             custom_api_url: Custom API endpoint URL
             custom_api_key: API key for custom endpoint
+            preserve_thinking: Whether to preserve thinking output (default: False)
         
         Returns:
             Generated summary as string
@@ -388,17 +401,17 @@ etc."""
                 summary = self.generate_summary_basic(combined_content, bullet_count)
             elif custom_api_url:
                 summary = self.generate_summary_with_custom_api(
-                    combined_content, bullet_count, custom_api_url, custom_api_key)
+                    combined_content, bullet_count, custom_api_url, custom_api_key, preserve_thinking)
             elif self.ai_provider == 'ollama' and self.ollama_available:
-                summary = self.generate_summary_with_ollama(combined_content, bullet_count, ollama_model)
+                summary = self.generate_summary_with_ollama(combined_content, bullet_count, ollama_model, preserve_thinking)
             elif self.ai_provider == 'openai' and self.openai_client:
-                summary = self.generate_summary_with_openai(combined_content, bullet_count)
+                summary = self.generate_summary_with_openai(combined_content, bullet_count, preserve_thinking)
             elif self.ai_provider == 'auto':
                 # Try methods in order of preference: OpenAI -> Ollama -> Basic
                 if self.openai_client:
-                    summary = self.generate_summary_with_openai(combined_content, bullet_count)
+                    summary = self.generate_summary_with_openai(combined_content, bullet_count, preserve_thinking)
                 elif self.ollama_available:
-                    summary = self.generate_summary_with_ollama(combined_content, bullet_count, ollama_model)
+                    summary = self.generate_summary_with_ollama(combined_content, bullet_count, ollama_model, preserve_thinking)
                 else:
                     print("Warning: No AI services available. Using basic summarization.")
                     summary = self.generate_summary_basic(combined_content, bullet_count)
@@ -438,6 +451,7 @@ Examples:
   %(prog)s --ai-provider openai               # Force OpenAI (requires API key)
   %(prog)s --custom-api-url http://localhost  # Use custom API endpoint
   %(prog)s --no-ai                            # Use basic summarization (no API calls)
+  %(prog)s --think                            # Preserve thinking output in AI responses
 
 Timeframe formats:
   2025-05     # All files from May 2025
@@ -507,6 +521,12 @@ AI Providers:
         help='Use basic summarization instead of AI (same as --ai-provider none)'
     )
     
+    parser.add_argument(
+        '--think',
+        action='store_true',
+        help='Preserve thinking output in AI responses (default: suppress thinking)'
+    )
+    
     return parser
 
 
@@ -566,7 +586,8 @@ def main():
             use_ai=(args.ai_provider != 'none'),
             ollama_model=args.ollama_model,
             custom_api_url=args.custom_api_url,
-            custom_api_key=custom_api_key
+            custom_api_key=custom_api_key,
+            preserve_thinking=args.think
         )
         
         # Output results
