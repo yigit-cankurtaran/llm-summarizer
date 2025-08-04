@@ -208,7 +208,3 @@ For PDF/EPUB processing:
 ## Contributing
 
 This project is designed for personal use and privacy. Feel free to fork and modify for your specific needs.
-
-## License
-
-[Add your license information here]
