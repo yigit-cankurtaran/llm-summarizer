@@ -35,20 +35,38 @@ try:
 except ImportError:
     REQUESTS_AVAILABLE = False
 
+# For book processing (PDF and EPUB)
+try:
+    import fitz  # PyMuPDF
+    PYMUPDF_AVAILABLE = True
+except ImportError:
+    PYMUPDF_AVAILABLE = False
+
+try:
+    import ebooklib
+    from ebooklib import epub
+    from bs4 import BeautifulSoup
+    EBOOKLIB_AVAILABLE = True
+except ImportError:
+    EBOOKLIB_AVAILABLE = False
+
 
 class LogSummaryProcessor:
     """Main class for processing log files and generating summaries."""
     
-    def __init__(self, directory: Path = None, ai_provider: str = 'auto'):
+    def __init__(self, path: Path = None, ai_provider: str = 'auto', 
+                 content_type: str = 'text'):
         """
-        Initialize the processor with a target directory and AI provider.
+        Initialize the processor with a target path (file or directory), AI provider, and content type.
         
         Args:
-            directory: Target directory to scan for files
+            path: Target file or directory to process
             ai_provider: AI service to use ('openai', 'ollama', 'auto', or 'none')
+            content_type: Type of content to process ('text' for .txt/.md, 'book' for PDFs/EPUBs)
         """
-        self.directory = directory or Path.cwd()
+        self.path = path or Path.cwd()
         self.ai_provider = ai_provider
+        self.content_type = content_type
         self.openai_client = None
         self.ollama_available = False
         
@@ -66,15 +84,38 @@ class LogSummaryProcessor:
                 except Exception:
                     self.ollama_available = False
     
+    def find_files(self) -> List[Path]:
+        """Find files based on content type (text or book files)."""
+        files = []
+        
+        # If path is a file, return it directly if it matches the content type
+        if self.path.is_file():
+            file_ext = self.path.suffix.lower()
+            if self.content_type == 'text' and file_ext in ['.md', '.txt']:
+                return [self.path]
+            elif self.content_type == 'book' and file_ext in ['.pdf', '.epub', '.mobi', '.azw', '.azw3']:
+                return [self.path]
+            else:
+                # Return the file anyway - let read_file_content handle unsupported formats
+                return [self.path]
+        
+        # If path is a directory, search recursively
+        if self.path.is_dir():
+            if self.content_type == 'text':
+                # Search for .md and .txt files recursively
+                for pattern in ['**/*.md', '**/*.txt']:
+                    files.extend(self.path.glob(pattern))
+            elif self.content_type == 'book':
+                # Search for book files recursively  
+                book_patterns = ['**/*.pdf', '**/*.epub', '**/*.mobi', '**/*.azw', '**/*.azw3']
+                for pattern in book_patterns:
+                    files.extend(self.path.glob(pattern))
+        
+        return sorted(files)
+    
     def find_log_files(self) -> List[Path]:
-        """Find all .md and .txt files in the directory and subdirectories."""
-        log_files = []
-        
-        # Search for .md and .txt files recursively
-        for pattern in ['**/*.md', '**/*.txt']:
-            log_files.extend(self.directory.glob(pattern))
-        
-        return sorted(log_files)
+        """Legacy method for backward compatibility - finds .md and .txt files."""
+        return self.find_files() if self.content_type == 'text' else []
     
     def extract_date_from_filename(self, filepath: Path) -> Optional[datetime]:
         """
@@ -175,13 +216,112 @@ class LogSummaryProcessor:
             cutoff_date = datetime.now() - timedelta(days=7)
             return [(fp, fd) for fp, fd in files_with_dates if fd >= cutoff_date]
     
-    def read_file_content(self, filepath: Path) -> str:
-        """Read and return the content of a file."""
+    def read_pdf_content(self, filepath: Path) -> str:
+        """
+        Extract text content from a PDF file using PyMuPDF.
+        
+        This method is designed to be extensible for future page/chapter-specific extraction.
+        
+        Args:
+            filepath: Path to the PDF file
+            
+        Returns:
+            Extracted text content from the entire PDF
+        """
+        if not PYMUPDF_AVAILABLE:
+            raise ValueError("PyMuPDF not available. Install with: pip install PyMuPDF")
+        
         try:
-            with open(filepath, 'r', encoding='utf-8') as f:
-                return f.read()
+            doc = fitz.open(filepath)
+            full_text = []
+            
+            # Extract text from all pages
+            # Future enhancement: Add page range support here
+            for page_num in range(doc.page_count):
+                page = doc[page_num]
+                text = page.get_text()
+                if text.strip():  # Only add non-empty pages
+                    # Add page delimiter for potential future page-specific processing
+                    full_text.append(f"=== Page {page_num + 1} ===\n{text}")
+            
+            doc.close()
+            return '\n\n'.join(full_text)
+            
+        except Exception as e:
+            raise ValueError(f"Error reading PDF {filepath}: {e}")
+    
+    def read_epub_content(self, filepath: Path) -> str:
+        """
+        Extract text content from an EPUB file using ebooklib.
+        
+        This method is designed to be extensible for future chapter-specific extraction.
+        
+        Args:
+            filepath: Path to the EPUB file
+            
+        Returns:
+            Extracted text content from the entire EPUB
+        """
+        if not EBOOKLIB_AVAILABLE:
+            raise ValueError("ebooklib not available. Install with: pip install ebooklib beautifulsoup4")
+        
+        try:
+            book = epub.read_epub(str(filepath))
+            full_text = []
+            
+            # Extract text from all chapters/items
+            # Future enhancement: Add chapter-specific extraction here
+            chapter_num = 1
+            for item in book.get_items():
+                if item.get_type() == ebooklib.ITEM_DOCUMENT:
+                    # Parse HTML content with BeautifulSoup
+                    soup = BeautifulSoup(item.get_content(), 'html.parser')
+                    text = soup.get_text()
+                    
+                    if text.strip():  # Only add non-empty chapters
+                        # Add chapter delimiter for potential future chapter-specific processing
+                        chapter_title = getattr(item, 'title', f'Chapter {chapter_num}') or f'Chapter {chapter_num}'
+                        full_text.append(f"=== {chapter_title} ===\n{text}")
+                        chapter_num += 1
+            
+            return '\n\n'.join(full_text)
+            
+        except Exception as e:
+            raise ValueError(f"Error reading EPUB {filepath}: {e}")
+    
+    def read_file_content(self, filepath: Path) -> str:
+        """
+        Read and return the content of a file based on its type.
+        
+        Supports:
+        - Text files (.txt, .md) - read as UTF-8 text
+        - PDF files (.pdf) - extract text using PyMuPDF
+        - EPUB files (.epub) - extract text using ebooklib
+        """
+        file_ext = filepath.suffix.lower()
+        
+        try:
+            if file_ext == '.pdf':
+                return self.read_pdf_content(filepath)
+            elif file_ext == '.epub':
+                return self.read_epub_content(filepath)
+            elif file_ext in ['.txt', '.md']:
+                with open(filepath, 'r', encoding='utf-8') as f:
+                    return f.read()
+            elif file_ext in ['.mobi', '.azw', '.azw3']:
+                # Note: These formats require additional libraries (kindle-unpack, mobidedrm)
+                # For now, return a placeholder message
+                return f"[{file_ext.upper()} format not yet supported - placeholder for future implementation]"
+            else:
+                # Fallback to text reading for unknown extensions
+                with open(filepath, 'r', encoding='utf-8') as f:
+                    return f.read()
+                    
         except (IOError, UnicodeDecodeError) as e:
             print(f"Warning: Could not read {filepath}: {e}")
+            return ""
+        except ValueError as e:
+            print(f"Warning: {e}")
             return ""
     
     def suppress_thinking_output(self, text: str, preserve_thinking: bool = False) -> str:
@@ -367,14 +507,16 @@ etc."""
         Returns:
             Generated summary as string
         """
-        # Find all log files
-        log_files = self.find_log_files()
+        # Find all files based on content type
+        files = self.find_files()
         
-        if not log_files:
-            return "No .md or .txt files found in the directory."
+        if not files:
+            content_desc = "text files (.md, .txt)" if self.content_type == 'text' else "book files (.pdf, .epub, etc.)"
+            path_desc = "file" if self.path.is_file() else "directory"
+            return f"No {content_desc} found in the {path_desc}."
         
         # Filter by date range
-        filtered_files = self.filter_files_by_date_range(log_files, timeframe)
+        filtered_files = self.filter_files_by_date_range(files, timeframe)
         
         if not filtered_files:
             timeframe_desc = timeframe or "the last week"
@@ -437,21 +579,29 @@ etc."""
 def setup_argument_parser() -> argparse.ArgumentParser:
     """Set up and configure the command line argument parser."""
     parser = argparse.ArgumentParser(
-        description='Generate bullet-point summaries from .md and .txt files',
+        description='Generate bullet-point summaries from text files or ebooks',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  %(prog)s                                    # Summarize files from last week (5 bullets)
+  %(prog)s                                    # Summarize text files from current directory (last week, 5 bullets)
+  %(prog)s /path/to/file.pdf --book           # Summarize a single PDF file
+  %(prog)s /path/to/logs                      # Summarize all text files in directory
   %(prog)s --timeframe 2025-05                # Summarize files from May 2025
   %(prog)s --bullets 10                       # Generate 10 bullet points
   %(prog)s --output summary.md                # Save to specific file
-  %(prog)s --directory /path/logs             # Process different directory
+  %(prog)s --book                             # Process books (PDF, EPUB) from current directory
+  %(prog)s /path/books --book                 # Process books from specific directory
+  %(prog)s --text                             # Process text files (.txt, .md) - default
   %(prog)s --ai-provider ollama               # Use Ollama for AI summarization
   %(prog)s --ollama-model llama3.3            # Use specific Ollama model
   %(prog)s --ai-provider openai               # Force OpenAI (requires API key)
   %(prog)s --custom-api-url http://localhost  # Use custom API endpoint
   %(prog)s --no-ai                            # Use basic summarization (no API calls)
   %(prog)s --think                            # Preserve thinking output in AI responses
+
+Content Types:
+  --text      # Process .txt and .md files (default)
+  --book      # Process PDF, EPUB, and other ebook formats
 
 Timeframe formats:
   2025-05     # All files from May 2025
@@ -465,6 +615,20 @@ AI Providers:
   ollama      # Use Ollama local models (requires Ollama running)
   none        # Basic text extraction only
         """
+    )
+    
+    # Content type group - mutually exclusive
+    content_group = parser.add_mutually_exclusive_group()
+    content_group.add_argument(
+        '--text',
+        action='store_true',
+        default=True,
+        help='Process text files (.txt, .md) - default behavior'
+    )
+    content_group.add_argument(
+        '--book',
+        action='store_true',
+        help='Process book files (.pdf, .epub, .mobi, .azw, .azw3)'
     )
     
     parser.add_argument(
@@ -486,10 +650,17 @@ AI Providers:
     )
     
     parser.add_argument(
-        '--directory', '-d',
+        'path',
+        nargs='?',
         type=Path,
         default=Path.cwd(),
-        help='Directory to search for files (default: current directory)'
+        help='File or directory to process (default: current directory)'
+    )
+    
+    parser.add_argument(
+        '--directory', '-d',
+        type=Path,
+        help='Directory to search for files (deprecated: use positional path argument)'
     )
     
     parser.add_argument(
@@ -540,17 +711,19 @@ def main():
         print("Error: Number of bullets must be at least 1")
         sys.exit(1)
     
-    if not args.directory.exists():
-        print(f"Error: Directory '{args.directory}' does not exist")
-        sys.exit(1)
+    # Handle deprecated --directory flag
+    target_path = args.directory if args.directory else args.path
     
-    if not args.directory.is_dir():
-        print(f"Error: '{args.directory}' is not a directory")
+    if not target_path.exists():
+        print(f"Error: Path '{target_path}' does not exist")
         sys.exit(1)
     
     # Handle --no-ai flag override
     if args.no_ai:
         args.ai_provider = 'none'
+    
+    # Determine content type based on flags
+    content_type = 'book' if args.book else 'text'
     
     # Get custom API key from environment if not provided
     custom_api_key = args.custom_api_key or os.getenv('CUSTOM_API_KEY')
@@ -570,14 +743,27 @@ def main():
     if args.custom_api_url and not REQUESTS_AVAILABLE:
         ai_warnings.append("Requests library not installed. Install with: pip install requests")
     
+    # Check for book processing dependencies if using book mode
+    book_warnings = []
+    if content_type == 'book':
+        if not PYMUPDF_AVAILABLE:
+            book_warnings.append("PyMuPDF not installed. Install with: pip install PyMuPDF")
+        if not EBOOKLIB_AVAILABLE:
+            book_warnings.append("ebooklib not installed. Install with: pip install ebooklib beautifulsoup4")
+    
     if ai_warnings and args.ai_provider != 'none':
         for warning in ai_warnings:
             print(f"Warning: {warning}")
         if args.ai_provider != 'auto':
             print("Consider using --ai-provider auto or --no-ai")
     
+    if book_warnings:
+        for warning in book_warnings:
+            print(f"Warning: {warning}")
+        print("Some book formats may not be supported without these libraries.")
+    
     # Initialize processor and run
-    processor = LogSummaryProcessor(args.directory, args.ai_provider)
+    processor = LogSummaryProcessor(target_path, args.ai_provider, content_type)
     
     try:
         summary = processor.process_files(
